@@ -6,7 +6,7 @@
     <parent>
         <groupId>com.flowershop</groupId>
         <artifactId>flower-shop-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.2.0-SNAPSHOT</version>
         <!-- Parent nằm ở repo flower-shop-platform.
              Trong workspace: Maven đọc thẳng file này (sửa platform là service thấy ngay).
              Clone repo này đứng riêng (CI, máy khác): file không tồn tại -> Maven tự lấy từ ~/.m2 / GitHub Packages. -->
@@ -45,6 +45,12 @@
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
 
+        <!-- Resource server: tự kiểm tra JWT bằng public key lấy từ JWKS của identity-service (zero trust) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+
         <!-- DB chỉ thay đổi qua migration có version, không để Hibernate tự sửa bảng -->
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -74,6 +80,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

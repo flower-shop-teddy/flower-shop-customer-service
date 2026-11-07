@@ -1,12 +1,18 @@
 package com.flowershop.customer;
 
+import com.flowershop.common.web.CorrelationIdFilter;
 import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -17,6 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -40,8 +48,40 @@ class CustomerApiIntegrationTest {
 
     private static final AtomicInteger PHONE_SEQ = new AtomicInteger();
 
+    /** Không kèm token nào: để test 401 và để tự gắn token cụ thể (khách, service...). */
     @Autowired
+    MockMvc anonymous;
+
+    @Autowired
+    WebApplicationContext context;
+
+    /** Mặc định mọi request mang token NHÂN VIÊN có đủ quyền customer:*. */
     MockMvc mockMvc;
+
+    @BeforeEach
+    void setUpStaffMockMvc() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(context)
+                .addFilters(context.getBean(CorrelationIdFilter.class))   // tự dựng MockMvc thì phải tự thêm filter
+                .apply(springSecurity())
+                .defaultRequest(get("/").with(staff()))
+                .build();
+    }
+
+    /**
+     * jwt() của spring-security-test tạo sẵn Authentication như thể token đã được kiểm tra chữ ký,
+     * nên test không cần identity-service đang chạy.
+     */
+    private static RequestPostProcessor staff() {
+        return jwt().jwt(j -> j.subject("staff-uuid").claim("user_type", "STAFF"))
+                .authorities(new SimpleGrantedAuthority("customer:read"), new SimpleGrantedAuthority("customer:create"),
+                        new SimpleGrantedAuthority("customer:write"), new SimpleGrantedAuthority("customer:deactivate"));
+    }
+
+    /** Token của khách: không có permission nào, chỉ có customer_id. */
+    private static RequestPostProcessor customer(long customerId) {
+        return jwt().jwt(j -> j.subject("customer-uuid-" + customerId)
+                .claim("user_type", "CUSTOMER").claim("customer_id", customerId));
+    }
 
     // ---------- Khách hàng ----------
 
@@ -198,6 +238,96 @@ class CustomerApiIntegrationTest {
         mockMvc.perform(post(addressesUrl(customerId)).contentType(APPLICATION_JSON).content(addressJson("Nhà riêng")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("CUS-422-001"));
+    }
+
+    // ---------- Phân quyền ----------
+
+    @Test
+    void noToken_returns401() throws Exception {
+        anonymous.perform(get("/api/v1/customers"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("COM-401-001"));
+    }
+
+    @Test
+    void customerToken_cannotUseStaffApi() throws Exception {
+        long id = createCustomer(nextPhone());
+        // Kể cả xem chính hồ sơ của mình qua API nhân viên cũng bị từ chối: khách phải dùng /me
+        anonymous.perform(get("/api/v1/customers/" + id).with(customer(id)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("COM-403-001"));
+        anonymous.perform(get("/api/v1/customers").with(customer(id)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void customerToken_invalidBodyOnStaffApi_returns403Not400() throws Exception {
+        anonymous.perform(post("/api/v1/customers").with(customer(1)).contentType(APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void serviceToken_withOnlyCreatePermission_canCreateButNotRead() throws Exception {
+        RequestPostProcessor identityService = jwt().jwt(j -> j.subject("identity-service").claim("user_type", "SERVICE"))
+                .authorities(new SimpleGrantedAuthority("customer:create"));
+        String body = anonymous.perform(post("/api/v1/customers").with(identityService)
+                        .contentType(APPLICATION_JSON).content(customerJson(nextPhone(), null)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.customerCode").exists())
+                .andReturn().getResponse().getContentAsString();
+        int id = JsonPath.read(body, "$.data.id");
+        anonymous.perform(get("/api/v1/customers/" + id).with(identityService))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---------- API /me của khách ----------
+
+    @Test
+    void me_returnsOwnProfile_fromTokenNotUrl() throws Exception {
+        String phone = nextPhone();
+        long id = createCustomer(phone);
+        anonymous.perform(get("/api/v1/customers/me").with(customer(id)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(id))
+                .andExpect(jsonPath("$.data.phone").value(phone));
+    }
+
+    @Test
+    void me_update_recordsCustomerAsUpdatedBy() throws Exception {
+        long id = createCustomer(nextPhone());
+        anonymous.perform(put("/api/v1/customers/me").with(customer(id)).contentType(APPLICATION_JSON)
+                        .content("{\"fullName\":\"Lan Nguyễn\",\"email\":null,\"dateOfBirth\":null,\"version\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fullName").value("Lan Nguyễn"));
+    }
+
+    @Test
+    void me_addresses_onlySeeOwnAddresses() throws Exception {
+        long mine = createCustomer(nextPhone());
+        long other = createCustomer(nextPhone());
+        long othersAddress = createAddress(other, "Nhà người khác");
+
+        anonymous.perform(post("/api/v1/customers/me/addresses").with(customer(mine))
+                        .contentType(APPLICATION_JSON).content(addressJson("Nhà tôi")))
+                .andExpect(status().isCreated());
+        anonymous.perform(get("/api/v1/customers/me/addresses").with(customer(mine)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].note").value("Nhà tôi"));
+
+        // Đoán id địa chỉ của người khác: 404 như không tồn tại
+        anonymous.perform(put("/api/v1/customers/me/addresses/" + othersAddress + "/default").with(customer(mine)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("CUS-404-002"));
+        anonymous.perform(delete("/api/v1/customers/me/addresses/" + othersAddress).with(customer(mine)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void me_withStaffToken_returns403() throws Exception {
+        anonymous.perform(get("/api/v1/customers/me").with(staff()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("COM-403-001"));
     }
 
     // ---------- Helpers ----------

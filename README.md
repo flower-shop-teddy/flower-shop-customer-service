@@ -15,16 +15,31 @@ Cổng local: `8082`
 
 ## API
 
+Mọi API cần token. Hai nhóm:
+
+**Nhân viên** (permission do identity-service cấp theo role):
+
+| Method | Path | Mô tả | Permission |
+|---|---|---|---|
+| POST | `/api/v1/customers` | Tạo khách hàng | `customer:create` |
+| GET | `/api/v1/customers/{id}` | Chi tiết | `customer:read` |
+| GET | `/api/v1/customers?phone=&page=&size=` | Danh sách khách ACTIVE (đã che PII) | `customer:read` |
+| PUT | `/api/v1/customers/{id}` | Sửa họ tên, email, ngày sinh (kèm `version`) | `customer:write` |
+| DELETE | `/api/v1/customers/{id}` | Ngừng hoạt động | `customer:deactivate` |
+| GET / POST | `/api/v1/customers/{id}/addresses` | Xem / thêm địa chỉ | `customer:read` / `customer:write` |
+| PUT / DELETE | `/api/v1/customers/{id}/addresses/{addressId}` | Sửa (kèm `version`) / xóa địa chỉ | `customer:write` |
+| PUT | `/api/v1/customers/{id}/addresses/{addressId}/default` | Đặt làm mặc định | `customer:write` |
+
+**Khách hàng** (mẫu `/me`: id khách lấy từ claim `customer_id` của token, không bao giờ từ URL):
+
 | Method | Path | Mô tả |
 |---|---|---|
-| POST | `/api/v1/customers` | Tạo khách hàng |
-| GET | `/api/v1/customers/{id}` | Chi tiết |
-| GET | `/api/v1/customers?phone=&page=&size=` | Danh sách khách ACTIVE (đã che PII) |
-| PUT | `/api/v1/customers/{id}` | Sửa họ tên, email, ngày sinh (kèm `version`) |
-| DELETE | `/api/v1/customers/{id}` | Ngừng hoạt động |
-| GET / POST | `/api/v1/customers/{id}/addresses` | Xem / thêm địa chỉ |
-| PUT / DELETE | `/api/v1/customers/{id}/addresses/{addressId}` | Sửa (kèm `version`) / xóa địa chỉ |
-| PUT | `/api/v1/customers/{id}/addresses/{addressId}/default` | Đặt làm mặc định |
+| GET / PUT | `/api/v1/customers/me` | Xem / sửa hồ sơ của mình |
+| GET / POST | `/api/v1/customers/me/addresses` | Sổ địa chỉ của mình |
+| PUT / DELETE | `/api/v1/customers/me/addresses/{addressId}` | Sửa / xóa |
+| PUT | `/api/v1/customers/me/addresses/{addressId}/default` | Đặt mặc định |
+
+identity-service gọi `POST /api/v1/customers` bằng token riêng của nó (`user_type=SERVICE`, chỉ có `customer:create`) khi khách tự đăng ký.
 
 Mã lỗi: `CUS-404-001` không tìm thấy khách · `CUS-404-002` không tìm thấy địa chỉ · `CUS-409-001` trùng SĐT · `CUS-409-002` trùng email · `CUS-422-001` khách đã ngừng hoạt động · `CUS-422-002` đã đủ 10 địa chỉ.
 
