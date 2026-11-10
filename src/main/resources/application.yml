@@ -30,6 +30,15 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Public key để kiểm tra chữ ký JWT. Lấy lần đầu khi có request mang token, sau đó cache;
+          # gặp kid lạ (identity vừa xoay khóa) thì tự tải lại.
+          jwk-set-uri: ${IDENTITY_JWKS_URI:http://localhost:8083/.well-known/jwks.json}
+          issuer-uri: flower-shop-identity     # chỉ để so khớp claim iss (đã có jwk-set-uri nên không gọi discovery)
+          audiences: flower-shop-api           # claim aud phải chứa giá trị này
 
 eureka:
   client:
@@ -57,4 +66,4 @@ springdoc:
 
 logging:
   pattern:
-    level: "%5p [${spring.application.name:},%X{correlationId:-}]"
+    level: "%5p [${spring.application.name:},%X{correlationId:-},%X{userId:-}]"

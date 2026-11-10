@@ -1,11 +1,10 @@
 package com.flowershop.customer.config;
 
+import com.flowershop.common.security.JwtAuditorAware;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.AuditorAware;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
-
-import java.util.Optional;
 
 /**
  * Tự động điền created_by / updated_by cho mọi bản ghi.
@@ -15,9 +14,9 @@ import java.util.Optional;
 @EnableJpaAuditing(auditorAwareRef = "auditorProvider")
 public class AuditConfig {
 
+    /** created_by / updated_by = claim sub trong JWT của người gọi API; không có người đăng nhập thì "system". */
     @Bean
     public AuditorAware<String> auditorProvider() {
-        // TODO giai đoạn Security: lấy username từ JWT trong SecurityContext
-        return () -> Optional.of("system");
+        return new JwtAuditorAware();
     }
 }
